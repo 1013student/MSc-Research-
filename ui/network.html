@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COMP7200 Blockchain</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+  <link rel="stylesheet" href="/ui/css/network.css">
+</head>
+<body>
+  <el-container id="app">
+    <el-header style="padding: 0;">
+      <el-menu mode="horizontal" background-color="#409EFF" text-color="#fff" active-text-color="#ffd04b">
+        <el-menu-item index="1">COMP7300 Fintech - Network Management</el-menu-item>
+        <el-menu-item index="2" style="float: right" v-if="nodeId">
+          <el-tag size="small" type="info">
+            Node ID: {{nodeId}}
+          </el-tag>
+        </el-menu-item>
+        <el-menu-item index="3" style="float: right">
+          <el-button type="text" style="color: white" @click="goToHome">
+            <i class="el-icon-back"></i> Back to Dashboard
+          </el-button>
+        </el-menu-item>
+      </el-menu>
+    </el-header>
+
+    <el-main>
+      <!-- Alerts -->
+      <el-row :gutter="20">
+        <el-col :span="24">
+          <el-alert
+            v-if="error"
+            type="error"
+            :title="error"
+            show-icon>
+          </el-alert>
+          <el-alert
+            v-if="success"
+            type="success"
+            :title="success"
+            show-icon>
+          </el-alert>
+        </el-col>
+      </el-row>
+
+      <!-- Network Management Card -->
+      <el-row style="margin-top: 20px;">
+        <el-col :span="24">
+          <el-card shadow="hover">
+            <div slot="header">
+              <span style="font-weight: bold;">Network Nodes</span>
+              <el-button 
+                style="float: right; padding: 3px 0" 
+                type="text"
+                @click="onLoadNodes">
+                <i class="el-icon-refresh"></i> Refresh Nodes
+              </el-button>
+            </div>
+
+            <!-- Add Node Form -->
+            <el-form
+              :rules="rules"
+              ref="form"
+              :model="form"
+              :inline="true"
+              @submit.native.prevent="onAddNode('form')">
+              <el-form-item label="Node URL" prop="url">
+                <el-input 
+                  v-model="form.url" 
+                  placeholder="localhost:5001"
+                  prefix-icon="el-icon-connection"
+                  style="width: 350px;">
+                </el-input>
+              </el-form-item>
+              <el-form-item>
+                <el-button 
+                  @click="onAddNode('form')" 
+                  type="primary" 
+                  icon="el-icon-plus">
+                  Add Node
+                </el-button>
+              </el-form-item>
+            </el-form>
+
+            <!-- Node List -->
+            <el-table
+              :data="peerNodes"
+              style="width: 100%; margin-top: 20px;"
+              :empty-text="'No nodes connected'">
+              <el-table-column label="Node URL" min-width="200">
+                <template slot-scope="scope">
+                  <el-tag size="medium" type="info">
+                    {{scope.row}}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column align="right" width="120">
+                <template slot-scope="scope">
+                  <el-tooltip content="Click to remove node" placement="top" effect="light">
+                    <el-button
+                      @click="onRmoveNode(scope.row)"
+                      type="danger"
+                      size="mini"
+                      icon="el-icon-delete"
+                      circle>
+                    </el-button>
+                  </el-tooltip>
+                </template>
+              </el-table-column>
+            </el-table>
+
+          </el-card>
+        </el-col>
+      </el-row>
+    </el-main>
+  </el-container>
+
+  <script src="/ui/js/vue.js"></script>
+  <script src="/ui/js/elementui.js"></script>
+  <script src="/ui/js/axios.js"></script>
+  <script>
+    new Vue({
+      el: '#app',
+      data: {
+        success: null,
+        error: null,
+        node: null,
+        nodeId: '',
+        peerNodes: [],
+        rules: {
+          url: [ { required: true, message: 'Please input Node URL' } ]
+        },
+        form: {
+          url: null
+        }
+      },
+      mounted: function () {
+        this.port = window.location.port || '5000'
+        document.title = 'Network - Node: ' + this.port
+      },
+      created: function() {
+        this.onLoadNodes()
+      },
+      methods: {
+        onAddNode: function (formName) {
+          const vm = this
+          this.$refs[formName].validate((valid) => {
+            axios.post('/node', { node: vm.form.url })
+              .then((response) => {
+                this.message('success', 'Stored node successfully')
+                this.peerNodes = response.data.all_nodes
+              })
+              .catch((error) => {
+                this.message('error', error.response.data.message)
+              })
+          })
+        },
+        onRmoveNode: function(url) {
+          this.$confirm('Are you sure you want to remove this node?', 'Warning', {
+            confirmButtonText: 'Yes',
+            cancelButtonText: 'No',
+            type: 'warning'
+          }).then(() => {
+            axios.delete('/node', { data: { node: url } })
+              .then(response => {
+                this.message('success', 'Delete node successfully')
+                this.peerNodes = response.data.all_nodes
+              })
+              .catch(error => {
+                this.message('error', error.response.data.message)
+              })
+          }).catch(() => {
+            this.message('info', 'Delete cancelled')
+          })
+        },
+        onLoadNodes: function() {
+          axios.get('/nodes')
+            .then(response => {
+              this.success = 'Fetched nodes successfully'
+              this.error = null
+              this.peerNodes = response.data.all_nodes
+              this.nodeId = response.data.node_id
+            })
+            .catch(error => {
+              this.success = null
+              this.error = error.response.data.message
+            })
+        },
+        goToHome: function() { // Navigate to the dashboard page
+          window.location.href = '/'
+        },
+        message: function(type, message) {
+          this.$message({
+            message: message,
+            type: type,
+            duration: 2000
+          })
+        }
+      }
+    })
+  </script>
+</body>
+</html>

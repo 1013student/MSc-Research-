@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+  <!-- <link rel="stylesheet" href="/ui/css/elementui.css"> -->
+  <link rel="stylesheet" href="/ui/css/index.css">
+  <title>BUCoins</title>
+  <script src="/ui/js/vue.js"></script>
+  <script src="/ui/js/elementui.js"></script>
+  <script src="/ui/js/axios.js"></script>
+  <script src="/ui/js/vue-clipboard.min.js"></script>
+</head>
+<body>
+  <el-container id="app">
+    <el-header style="padding: 0;">
+      <el-menu mode="horizontal" background-color="#409EFF" text-color="#fff" active-text-color="#ffd04b">
+        <el-menu-item index="1">BUCoins Dashboard</el-menu-item>
+        <el-menu-item index="2" style="float: right" v-if="wallet">
+          <el-tag size="small" type="info">
+            Public Key: {{wallet && wallet.publicKey ? wallet.publicKey.substring(0,20) : '' }}...
+            <el-button type="text" v-clipboard:copy="wallet.publicKey" v-clipboard:success="() => onCopy('Public Key')" style="padding: 0 0 0 5px">
+              <i class="el-icon-document-copy" style="color: #909399"></i>
+            </el-button>
+          </el-tag>
+        </el-menu-item>
+        <el-menu-item index="3" style="float: right">
+          <el-button type="text" style="color: white" @click="goToNetwork">
+            <i class="el-icon-connection"></i> Network Management
+          </el-button>
+        </el-menu-item>
+      </el-menu>
+    </el-header>
+
+    <el-main>
+      <el-row :gutter="20">
+        <el-col :span="24">
+          <el-alert v-if="error" type="error" :title="error" show-icon></el-alert>
+          <el-alert v-if="success" type="success" :title="success" show-icon></el-alert>
+        </el-col>
+      </el-row>
+
+      <el-row :gutter="20" style="margin-top: 20px;">
+        <!-- Wallet Card -->
+        <el-col :xs="24" :sm="12">
+          <el-card v-loading="walletLoading">
+            <div slot="header">
+              <span>Wallet</span>
+            </div>
+            <el-row type="flex" justify="center">
+              <el-statistic :value="balance" :precision="5" title="Balance" suffix="BUC">
+              </el-statistic>
+            </el-row>
+            <el-row style="margin-top: 20px;">
+              <el-button-group style="width: 100%">
+                <el-button @click="onCreateWallet" type="primary" style="width: 50%">Create Wallet</el-button>
+                <el-button @click="onLoadWallet" type="success" style="width: 50%">Load Wallet</el-button>
+              </el-button-group>
+            </el-row>
+          </el-card>
+        </el-col>
+
+        <!-- Transaction Form -->
+        <el-col :xs="24" :sm="12">
+          <el-card v-loading="txLoading">
+            <div slot="header">
+              <span>New Transaction</span>
+            </div>
+            <el-form :rules="rules" ref="outgoingTx" :model="outgoingTx" label-position="top">
+              <el-form-item label="Recipient Key" prop="recipient">
+                <el-input placeholder="Enter recipient's public key" v-model="outgoingTx.recipient"></el-input>
+              </el-form-item>
+              <el-form-item label="Amount" prop="amount">
+                <el-input-number 
+                  v-model="outgoingTx.amount" 
+                  :min="0.00001" 
+                  :precision="5"
+                  :step="0.1"
+                  style="width: 100%"
+                  controls-position="right"
+                  placeholder="Enter amount">
+                </el-input-number>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="onSendTx('outgoingTx')" style="width: 100%">Send Transaction</el-button>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-col>
+      </el-row>
+
+      <!-- Blockchain and Transactions Section -->
+      <el-row style="margin-top: 20px;">
+        <el-col :span="24">
+          <el-card>
+            <el-tabs type="border-card" v-model="view">
+              <!-- Blockchain Tab -->
+              <el-tab-pane label="Blockchain" name="chain">
+                <div v-loading="dataLoading">
+                  <el-row style="margin-bottom: 20px;">
+                    <el-button-group>
+                      <el-button @click="onLoadChain" type="primary" icon="el-icon-refresh">Refresh Chain</el-button>
+                      <el-button
+                        @click="onMine" 
+                        type="success" 
+                        icon="el-icon-coin"
+                        :loading="miningLoading">
+                        Mine BUCoins
+                      </el-button>
+                      <el-button @click="onResolve" type="warning" icon="el-icon-connection">Resolve Conflicts</el-button>
+                    </el-button-group>
+                  </el-row>
+                  
+                  <el-timeline>
+                    <el-timeline-item
+                      v-for="block in blockchain"
+                      :key="block.index"
+                      :timestamp="'Block #' + block.index"
+                      placement="top">
+                      <el-card shadow="hover">
+                        <el-descriptions title="Block Details" :column="1" border>
+                          <el-descriptions-item label="Previous Hash">
+                            {{block.previous_hash || "0000"}}
+                          </el-descriptions-item>
+                        </el-descriptions>
+                        
+                        <el-divider content-position="left">Transactions</el-divider>
+                        <el-card 
+                          v-for="(tx, idx) in block.transactions" 
+                          :key="idx"
+                          shadow="never"
+                          style="margin-bottom: 10px;">
+                          <el-descriptions :column="1" border size="small">
+                            <el-descriptions-item label="TxID">
+                              {{tx.txid}}
+                            </el-descriptions-item>
+                            <el-descriptions-item label="Sender">{{tx.sender}}</el-descriptions-item>
+                            <el-descriptions-item label="Recipient">{{tx.recipient}}</el-descriptions-item>
+                            <el-descriptions-item label="Amount">{{tx.amount}} BUC</el-descriptions-item>
+                          </el-descriptions>
+                        </el-card>
+                      </el-card>
+                    </el-timeline-item>
+                  </el-timeline>
+                </div>
+              </el-tab-pane>
+
+              <!-- Open Transactions Tab -->
+              <el-tab-pane label="Open Transactions" name="OpenTx">
+                <div v-loading="dataLoading">
+                  <el-row style="margin-bottom: 20px;">
+                    <el-button @click="onLoadTx" type="primary" icon="el-icon-refresh">
+                      Refresh Transactions
+                    </el-button>
+                  </el-row>
+                  
+                  <el-card
+                    v-for="(tx, index) in openTransactions"
+                    :key="index"
+                    shadow="hover"
+                    style="margin-bottom: 10px;">
+                    <el-descriptions :column="1" border>
+                      <el-descriptions-item label="TxID">{{tx.txid}}</el-descriptions-item>
+                      <el-descriptions-item label="Sender">{{tx.sender}}</el-descriptions-item>
+                      <el-descriptions-item label="Recipient">{{tx.recipient}}</el-descriptions-item>
+                      <el-descriptions-item label="Amount">{{tx.amount}} BUC</el-descriptions-item>
+                    </el-descriptions>
+                  </el-card>
+                </div>
+              </el-tab-pane>
+            </el-tabs>
+          </el-card>
+        </el-col>
+      </el-row>
+    </el-main>
+  </el-container>
+  <script>
+    Vue.use(VueClipboard)
+    
+    new Vue({
+      el: '#app',
+      data: {
+        course: 'COMP7300 Fintech',
+        rules: {
+          recipient: [
+            { required: true, message: 'Please input recipient key' }
+          ],
+          amount: [
+            { required: true, message: 'Please input amount' },
+            { type: 'number', min: 0.00001, message: 'Amount must be greater than 0' }
+          ]
+        },
+        activeBlockName: '',
+        activeTxName: '',
+        blockchain: [],
+        openTransactions: [],
+        wallet: null,
+        view: 'chain',
+        walletLoading: false,
+        txLoading: false,
+        dataLoading: false,
+        showElement: null,
+        error: null,
+        success: null,
+        balance: 0,
+        txOpitons: false,
+        outgoingTx: {
+          recipient: null,
+          amount: 0.0
+        },
+        miningLoading: false,
+        port: null
+      },
+      mounted: function () {
+        this.port = window.location.port || '5000'
+        document.title = 'Node: ' + this.port
+      },
+      created: function () {
+        this.onLoadWallet()
+        this.onLoadChain()
+      },
+      methods: {
+        onCreateWallet: function () { // If there is already a wallet, confirm the creation of a new wallet
+          if (this.wallet) {
+            this.$confirm('Are you sure you want to create a new wallet?', 'Warning', {
+              confirmButtonText: 'Continue',
+              cancelButtonText: 'Cancel',
+              type: 'warning'
+            }).then(() => {
+              this.createNewWallet()
+            }).catch(() => {
+              this.message('info', 'Wallet creation cancelled')
+            })
+          } else {
+            this.createNewWallet()
+          }
+        },
+        createNewWallet: function () { // Create a new wallet, the previous wallet will be overwritten
+          const vm = this
+          this.walletLoading = true
+          axios.post('/wallet')
+            .then(function (response) {
+              vm.error = null
+              vm.success = 'Created Wallet!'
+              vm.wallet = {
+                publicKey: response.data.public_key,
+                privateKey: response.data.private_key
+              }
+              vm.balance = response.data.funds
+              vm.txOpitons = true
+              vm.walletLoading = false
+            })
+            .catch(function (error) {
+              vm.success = null
+              vm.error = error.response.data.message
+              vm.txOpitons = false
+              vm.walletLoading = false
+            })
+        },
+        onLoadWallet: function () { // load the wallet from the server
+          const vm = this
+          this.walletLoading = true
+          axios.get('/wallet')
+            .then(function (response) {
+              vm.error = null
+              vm.success = 'Wallet Loaded!'
+              vm.wallet = {
+                publicKey: response.data.public_key,
+                privateKey: response.data.private_key
+              }
+              vm.balance = response.data.funds
+              vm.txOpitons = true
+              vm.walletLoading = false
+            })
+            .catch(function (error) {
+              vm.success = null
+              vm.error = error.response.data.message
+              vm.wallet = null
+              vm.txOpitons = false
+              vm.walletLoading = false
+            })
+        },
+        onLoadChain: function() { // load the blockchain
+          const vm = this
+          vm.dataLoading = true
+          axios.get('/chain')
+            .then(function (response) {
+              vm.dataLoading = false
+              vm.blockchain = response.data.reverse()
+            })
+            .catch(function (error) {
+              vm.dataLoading = false
+              vm.message('error', 'No chain data found')
+            })
+        },
+        onLoadTx: function() { // load open transaction
+          const vm = this
+          vm.dataLoading = true
+          axios.get('/transactions')
+            .then(function (response) {
+              vm.dataLoading = false
+              vm.openTransactions = response.data.reverse()
+            })
+            .catch(function (error) {
+              vm.dataLoading = false
+              vm.message('error', 'No open transactions found')
+            })
+        },
+        onSendTx: function (formName) { // Add new transaction
+          const vm = this
+          this.$confirm('Add a new transaction. Continue?', 'Warning', {
+            confirmButtonText: 'Continue',
+            cancelButtonText: 'Cancel',
+            type: 'warning'
+          }).then(() => {
+            vm.$refs[formName].validate((valid) => {
+              if (valid) {
+                vm.txLoading = true
+                axios.post('/transaction', {
+                  recipient: vm.outgoingTx.recipient,
+                  amount: vm.outgoingTx.amount
+                })
+                  .then(function(response) {
+                    vm.message('success', response.data.message)
+                    vm.balance = response.data.funds
+                    vm.txLoading = false
+                    vm.outgoingTx = {
+                      recipient: null,
+                      amount: 0.0
+                    }
+                  })
+                  .catch(function(error) {
+                    vm.message('error', error.response.data.message)
+                    vm.txLoading = false
+                  })
+              }
+            })
+          })
+        },
+        onMine: function () { // Mining
+          const vm = this
+          this.$confirm('Mining a new block will take some time. Continue?', 'Warning', {
+            confirmButtonText: 'Continue',
+            cancelButtonText: 'Cancel',
+            type: 'warning'
+          }).then(() => {
+            vm.dataLoading = true
+            vm.miningLoading = true
+            if (!this.wallet) {
+              this.message('error', 'Please Load Wallet first')
+              vm.dataLoading = false
+              vm.miningLoading = false
+              return
+            }
+            axios.post('/mine')
+              .then(function (response) {
+                vm.balance = response.data.funds
+                console.log(response.data)
+                vm.dataLoading = false
+                vm.miningLoading = false
+                vm.message('success', response.data.message)
+                vm.onLoadChain()
+                // vm.onLoadTx()
+              })
+              .catch(function (error) {
+                vm.dataLoading = false
+                vm.miningLoading = false
+                vm.message('error', error.response.data.message)
+              })
+          }).catch(() => {
+            vm.message('info', 'Mining cancelled')
+          })
+        },
+        onResolve: function() { // resolve conflicts
+          const vm = this
+          vm.dataLoading = true
+          axios.post('/resolve_conflicts')
+            .then(response => {
+              vm.dataLoading = false
+              vm.onLoadWallet()
+              vm.onLoadChain()
+              // vm.onLoadTx()
+              this.message('success', response.data.message)
+            })
+            .catch(error => {
+              vm.dataLoading = false
+              this.message('error', error.response.data.message)
+            })
+        },
+        onCopy: function(identifier) {
+          this.message('success', `${identifier} copied to clipboard!`)
+        },
+        goToNetwork: function() { // Navigate to the network management page
+          window.location.href = '/network'
+        },
+        message: function(type, message) {
+          this.$message({
+            message: message,
+            type: type,
+            duration: 2000
+          })
+        }
+      }
+    })
+  </script>
+</body>
+</html>
